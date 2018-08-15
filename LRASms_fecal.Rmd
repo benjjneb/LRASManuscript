@@ -1,7 +1,7 @@
 ---
-title: "PacBio - FMT Samples"
-author: "BJC"
-date: "7/27/2018"
+title: "DADA2 + PacBio: Fecal Samples"
+author: "Benjamin J Callahan"
+date: "7/19/2018"
 output: html_document
 ---
 
@@ -13,8 +13,6 @@ The data were processed from extracted gDNA by PacBio using their 16S protocol a
 
 CCS reads were constructed using PacBio's software, default parameters (including `minPasses` of 3) and a `minPredictedAccuracy` of 99.9%.
 
-*GET FULL DETAILS ON SEQUENCING INSTRUMENT AND SOFTWARE VERSIONS*
-
 ## Setup
 
 Load libraries, setup paths, prepare environment:
@@ -24,6 +22,7 @@ library(Biostrings); packageVersion("Biostrings")
 library(ShortRead); packageVersion("ShortRead")
 library(ggplot2); packageVersion("ggplot2")
 library(reshape2); packageVersion("reshape2")
+library(phyloseq); packageVersion("phyloseq")
 path1 <- "~/Desktop/LRAS/Data/Fecal1" # CHANGE ME to location of the First Replicate fastq files
 path2 <- "~/Desktop/LRAS/Data/Fecal2" # CHANGE ME to location of the Second Replicate fastq files
 path.out <- "Figures/"
@@ -43,11 +42,11 @@ We will start by processing replicate 2, the high depth replicate, which we will
 ## Remove Primers and Filter
 
 Remove primers and orient reads:
-```{r primers2}
+```{r primers2, message=FALSE, warning=FALSE}
 nops2 <- file.path(path2, "noprimers", basename(fns2))
 for(i in seq_along(fns2)) {
   fn <- fns2[[i]]; nop <- nops2[[i]]
-  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
+  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
 }
 ```
 
@@ -229,7 +228,6 @@ ggsave(file.path(path.out, "Fecal_Ecoli_ASVs.pdf"), width=5, height=3, useDingba
 
 Create an ordination.
 ```{r ordinate}
-library(phyloseq)
 ps2 <- phyloseq(otu_table(ft2, taxa_are_rows=FALSE), sample_data(df))
 ord2 <- ordinate(ps2, method="MDS", distance="bray")
 dford2 <- cbind(df, ord2$vectors)
