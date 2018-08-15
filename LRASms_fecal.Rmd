@@ -1,0 +1,404 @@
+---
+title: "PacBio - FMT Samples"
+author: "BJC"
+date: "7/27/2018"
+output: html_document
+---
+
+## Data
+
+This data is from a set of 12 fecal samples from 6 subjects. 2 of the subjects gave multiple longitudinal samples at 1-6 month intervals.
+
+The data were processed from extracted gDNA by PacBio using their 16S protocol and the Sequel sequencing instrument. Replicate 1 was sequenced using the S/P2-C2/5.0 sequencing chemistry, and Replicate 2 was sequenced with a pre-release version of the S/P3-C3/5.0 sequencing chemistry.
+
+CCS reads were constructed using PacBio's software, default parameters (including `minPasses` of 3) and a `minPredictedAccuracy` of 99.9%.
+
+*GET FULL DETAILS ON SEQUENCING INSTRUMENT AND SOFTWARE VERSIONS*
+
+## Setup
+
+Load libraries, setup paths, prepare environment:
+```{r init, warning=FALSE, message=FALSE}
+library(dada2);packageVersion("dada2")
+library(Biostrings); packageVersion("Biostrings")
+library(ShortRead); packageVersion("ShortRead")
+library(ggplot2); packageVersion("ggplot2")
+library(reshape2); packageVersion("reshape2")
+path1 <- "~/Desktop/LRAS/Data/Fecal1" # CHANGE ME to location of the First Replicate fastq files
+path2 <- "~/Desktop/LRAS/Data/Fecal2" # CHANGE ME to location of the Second Replicate fastq files
+path.out <- "Figures/"
+path.rds <- "RDS/"
+fns1 <- list.files(path1, pattern="fastq.gz", full.names=TRUE)
+fns2 <- list.files(path2, pattern="fastq.gz", full.names=TRUE)
+F27 <- "AGRGTTYGATYMTGGCTCAG"
+R1492 <- "RGYTACCTTGTTACGACTT"
+rc <- dada2:::rc
+theme_set(theme_bw())
+```
+
+## Process Replicate 2
+
+We will start by processing replicate 2, the high depth replicate, which we will use to explore the *E. coli* ASVs in this data.
+
+## Remove Primers and Filter
+
+Remove primers and orient reads:
+```{r primers2}
+nops2 <- file.path(path2, "noprimers", basename(fns2))
+for(i in seq_along(fns2)) {
+  fn <- fns2[[i]]; nop <- nops2[[i]]
+  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
+}
+```
+
+Higher loss here than in the mock communities, but still very reasonable. Probably not surprising its a bit higher given this is a real sample rather than mock DNA, and the DNA extraction step was done by CoreBiome without special care to ensuring higher molecular weight DNA.
+
+Inspect length distribution.
+```{r length-distro}
+lens.fn <- lapply(nops2, function(fn) nchar(getSequences(fn)))
+lens <- do.call(c, lens.fn)
+hist(lens, 100)
+```
+
+Very strong peak ~1450, looks good.
+
+Filter:
+```{r filter2}
+filts2 <- file.path(path2, "noprimers", "filtered", basename(fns2))
+track2 <- filterAndTrim(nops2, filts2, minQ=3, minLen=1000, maxLen=1600, maxN=0, rm.phix=FALSE, maxEE=2)
+track2
+```
+
+Losing <2% of reads per sample. Mean/Median reads per sample is 20K! No low depth outliers.
+
+## Run DADA2
+
+Dereplicate:
+```{r derep2}
+drp2 <- derepFastq(filts2, verbose=TRUE)
+```
+
+Roughly 1/4th unique sequences in these samples.
+
+Learn errors:
+```{r learn-err2}
+err2 <- learnErrors(drp2, errorEstimationFunction=PacBioErrfun, BAND_SIZE=32, multithread=TRUE)
+saveRDS(err2, file.path(path.rds, "Fecal_err2.rds"))
+```
+
+Inspect errors:
+```{r see-err2}
+plotErrors(err2)
+```
+
+Looks good.
+
+Denoise:
+```{r dada2}
+dd2 <- dada(drp2, err=err2, multithread=TRUE)
+saveRDS(dd2, file.path(path.rds, "Fecal_dd2.rds"))
+```
+
+Sequence table:
+```{r seqtab2}
+st2 <- makeSequenceTable(dd2); dim(st2)
+```
+
+## Taxonomy and Chimeras
+
+Assign taxonomy:
+```{r taxonomy2}
+tax2 <- assignTaxonomy(st2, "~/tax/silva_nr_v128_train_set.fa.gz", multithread=TRUE) # Slowest part
+tax2[,"Genus"] <- gsub("Escherichia/Shigella", "Escherichia", tax2[,"Genus"]) # Reformat to be compatible with other data sources
+head(unname(tax2))
+```
+
+Check chimeras:
+```{r chimera2}
+bim2 <- isBimeraDenovo(st2, minFoldParentOverAbundance=3.5, multithread=TRUE)
+table(bim2)
+sum(st2[,bim2])/sum(st2)
+```
+
+More than the zero seen in the mock datasets. Still a very low fraction of reads though.
+
+Extract sample names from the filenames:
+```{r sample.names}
+sample.names2 <- sapply(strsplit(fns2, "_"), function(x) paste(x[3], x[4], sep="_"))
+sample.names2 <- gsub(".ccs99.9.fastq.gz", "", sample.names2)
+rownames(st2) <- sample.names2
+sample.names2
+```
+
+Save processed objects for future analysis.
+```{r saveRDS}
+saveRDS(st2, file.path(path.rds, "Fecal_st2.rds"))
+saveRDS(tax2, file.path(path.rds, "Fecal_tax2_Silva128.rds"))
+```
+
+Reload processed data objects (can run code below from here in absence of input sequence data):
+```{r readRDS}
+st2 <- readRDS(file.path(path.rds, "Fecal_st2.rds"))
+tax2 <- readRDS(file.path(path.rds, "Fecal_tax2_Silva128.rds"))
+```
+
+## Sample Metadta
+
+Import the metadata for these samples, which is just the subject and the time ordering of the sample from that subject (only relevant for the two subjects with multiple samples).
+```{r sample-data}
+ft2 <- sweep(st2, 1, rowSums(st2), "/")
+df <- read.table("Docs/Fecal_Metadata.csv", header=TRUE, sep="\t", stringsAsFactors=FALSE)
+df$SampleID <- gsub("_", ".", df$X)
+df$SampleID <- gsub("^D", "D_", df$SampleID)
+df$SampleID <- gsub("^R", "R_", df$SampleID)
+rownames(df) <- df$SampleID
+df <- df[sample.names2,-1]
+head(df)
+```
+
+## Inspect E. coli
+
+In the mock community datasets, we resolved the full complement of 16S sequence variants in *E. coli* and used them to precisely classify those *E. coli* strains as O157:H7 and K-12. Let's see if we can achieve similar reconstruction of *E. coli* strains in these real fecal samples.
+
+```{r}
+sq2 <- getSequences(st2)
+is.ecoli <- tax2[,"Genus"] %in% "Escherichia"
+sqec <- sq2[is.ecoli]
+which(is.ecoli)
+rowSums(st2[,is.ecoli]>0)
+```
+
+Several *E. coli* ASVs, although since we expect 3-6 unique alleles per strain that probably only represents 3-4 strains.
+
+Visualize the distribution of *E. coli* variants.
+```{r plot-ecoli-abund}
+ecdf <- data.frame(st2[,is.ecoli])
+names(sqec) <- paste0("Ec", seq(ncol(ecdf)))
+ecnames <- names(sqec); names(ecnames) <- sqec # map to ecnames from sequences
+colnames(ecdf) <- names(sqec)
+ecdf <- cbind(ecdf, Sample=rownames(st2))
+ecm <- melt(ecdf, id.vars="Sample", value.name="Abundance", variable.name="SequenceVariant")
+ggplot(data=ecm, aes(x=Sample, y=Abundance, color=SequenceVariant)) + geom_point()
+```
+
+Very clear 3:1:1:1:1 full complement signal in R_3, consistent over the time-course from R_3.1 to R_3.2 to R_3.3. R_9.1B also has a clear 2:1:1:1:1:1 full complement. 
+
+R_9.1 is less clear because fo the lower abundances, but may have 2 distinct strains given the 10 total *E. coli* variants in that sample (see previous code block). Note that R_9.1 precedes R_9.1B from the same subject. Taking a closer look at R_9.1:
+
+```{r R_9.1}
+isam <- "R_9.1"
+ggplot(data=ecm[ecm$Sample == isam,], aes(x=SequenceVariant, y=Abundance, fill=SequenceVariant)) + 
+  geom_col(width=0.4) + scale_y_continuous(breaks=seq(0,250,10)) + 
+  ggtitle(paste("Sample", isam))
+```
+
+With high confidence, this suggest to me a high abundance strain with a 4:1:1:1 full complement of Ec2:Ec13:Ec14. With moderate confidence, this suggests to me a lower abundance strain with a 2?:1:1:1:1:1 full complement of Ec6:Ec7:Ec8:Ec9:Ec10:Ec11. And, in fact, that is the strain because that was the strain subject R9 has in the next time-point!
+
+```{r}
+ecdf["R_9.1B",]
+```
+
+Pretty cool that even when the minor variants are at an abundance of below 10 they are still being detected!
+
+Make a publication plot of just samples with appreciable *E. coli* (and one extra sample from R9 to make both time-courses have 3 samples).
+```{r plot-ecoli}
+ecm$SampleOrder <- df$SampleOrder[ecm$Sample]
+ecm$Timepoint <- paste("Timepoint", ecm$SampleOrder)
+ecm$Subject <- df$Subject[ecm$Sample]
+ecm$SubjectLabel <- paste("Subject", df$Subject[ecm$Sample])
+ecmp <- ecm[ecm$Sample %in% c("R_3.1", "R_3.2", "R_3.3", "R_9.1", "R_9.1B", "R_9.2"),]
+ecmp$SequenceVariant <- as.character(ecmp$SequenceVariant)
+ecmp <- ecmp[ecmp$Abundance > 0,]
+xx.R3 <- c(Ec1=1, Ec2=2, Ec3=3, Ec4=4, Ec5=5) # Strain 1
+PAD <- 8 # Between strain pad
+xx.R9 <- c(Ec2=1+PAD, Ec12=2+PAD, Ec13=3+PAD, Ec14=4+PAD, # Strain 2
+           Ec6=1+2*PAD, Ec7=2+2*PAD, Ec8=3+2*PAD, Ec9=4+2*PAD, Ec10=5+2*PAD, Ec11=6+2*PAD) # Strain 3
+ecmp$X <- 0
+is.R3 <- ecmp$Subject == "R3"; ecmp$X[is.R3] <- xx.R3[ecmp$SequenceVariant[is.R3]]
+is.R9 <- ecmp$Subject == "R9"; ecmp$X[is.R9] <- xx.R9[ecmp$SequenceVariant[is.R9]]
+p.ecoli <- ggplot(data=ecmp, aes(x=X, y=Abundance, color=SequenceVariant)) + geom_point() + 
+  facet_grid(SubjectLabel~Timepoint, scales="free_y") +
+  xlab("E. coli ASVs") + theme(axis.ticks.x=element_blank(), axis.text.x = element_blank()) +
+  theme(panel.grid.major.x=element_blank(), panel.grid.minor.x=element_blank()) + 
+  guides(color=FALSE)
+p.ecoli
+ggsave(file.path(path.out, "Fecal_Ecoli_ASVs.pdf"), width=5, height=3, useDingbats=FALSE)
+```
+
+## Ordination
+
+Create an ordination.
+```{r ordinate}
+library(phyloseq)
+ps2 <- phyloseq(otu_table(ft2, taxa_are_rows=FALSE), sample_data(df))
+ord2 <- ordinate(ps2, method="MDS", distance="bray")
+dford2 <- cbind(df, ord2$vectors)
+ggplot(data=dford2, aes(x=Axis.1, y=Axis.2, color=Subject)) + geom_text(aes(label=SampleID))
+```
+
+These are just crude whole-community ordinations, but clearly there are strong time-course correlations, as the R3 samples and R9 2-4 cluster close together. The third cluster of points is everything else, which includes the two earlier R9 samples as well (R9 1 & 1B).
+
+## TECHNICAL. REPLICATES.
+
+Since we do not have a ground truth in these natural samples, we repeated the sequencing of these samples to create technical replicates, so as to characterize the consistency of our method. Note: These are close but not perfect technical replicates, as Replicate 1 was sequenced using the currently available S/P2-C2/5.0 sequencing chemistry, and Replicate 2 of the fecal samples was sequenced with a pre-release version of the S/P3-C3/5.0 sequencing chemistry.
+
+We haven't performed the pre-processing steps yet for the Replicate 1 samples, so we go ahead and do that now (primer removal, filtering, learn error rates).
+
+```{r filter1}
+fns1 <- list.files(path1, pattern="fastq.gz", full.names=TRUE)
+sample.names1 <- sapply(strsplit(fns1, "_"), function(x) paste(x[4], x[5], sep="_"))
+sample.names1 <- gsub(".fastq.gz", "", sample.names1)
+# Remove primers
+nops1 <- file.path(path1, "noprimers", basename(fns1))
+for(i in seq_along(fns1)) {
+  fn <- fns1[[i]]; nop <- nops1[[i]]
+  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
+}
+# Filter
+filts1 <- file.path(path1, "noprimers", "filtered", basename(fns1))
+track1 <- filterAndTrim(nops1, filts1, minQ=3, minLen=1000, maxLen=1600, maxN=0, rm.phix=FALSE, maxEE=2)
+track1
+```
+
+Note that the read yield is lower in Replicate 1 than Replicate 2, because the new chemistry used in Replicate 2 has higher yield.
+
+Continue through learning the error rates.
+```{r learn-err1}
+err1 <- learnErrors(filts1, errorEstimationFunction=PacBioErrfun, BAND_SIZE=32, multithread=TRUE)
+saveRDS(err1, file.path(path.rds, "Fecal_err1.rds"))
+```
+
+Check the total numbers for each replicate after primer removal and filtering.
+```{r read-totals}
+colSums(track1); median(track1[,2])
+colSums(track2); median(track2[,2])
+
+```
+
+## Rarefy to consistent depth
+
+We now rarefy samples from each replicate down to a consistent read depth of 10,000 to remove systematic library size effects.
+
+Set up file paths and define function.
+```{r rare-init, warning=FALSE, message=FALSE}
+path1.rare <- file.path(dirname(filts1[[1]]), "Rare10K")
+if(!dir.exists(path1.rare)) dir.create(path1.rare)
+path2.rare <- file.path(dirname(filts2[[1]]), "Rare10K")
+if(!dir.exists(path2.rare)) dir.create(path2.rare)
+# Define function that rarefies fastq files
+rarefyFastq <- function(filt, fout, n) {
+  require(ShortRead)
+  if(file.exists(fout)) file.remove(fout)
+  f <- FastqSampler(filt, n=n)
+  fq.sample <- yield(f)
+  close(f)
+  nout <- writeFastq(fq.sample, fout)
+  nout
+}
+```
+
+Rarefy the first replicate to 10k reads per sample.
+```{r rarefy-1}
+rares1 <- file.path(path1.rare, basename(filts1))
+nrec1 <- mapply(rarefyFastq, filts1, rares1, n=10000)
+names(nrec1) <- sample.names1
+nrec1
+```
+Three samples had less then 10k reads. While we could drop the rarefaction depth, I'm choosing to keep it at 10k and drop those samples for ease of interpretability (e.g. 1% frequency = 100 reads).
+
+Rarefy the second replicate to 10k reads per sample.
+```{r rarefy-2}
+rares2 <- file.path(path2.rare, basename(filts2))
+nrec2 <- mapply(rarefyFastq, filts2, rares2, n=10000)
+names(nrec2) <- sample.names2
+nrec2
+```
+
+Pick out just the samples that reached 10k in both replicates.
+```{r}
+identical(sample.names1, sample.names2) # TRUE
+sample.names <- sample.names1
+keep <- nrec1 == 10000 & nrec2 == 10000
+```
+
+Now we go ahead and process the rarefied samples. 
+
+Replicate 1:
+```{r proc-rare1}
+drp1.rare <- derepFastq(rares1[keep])
+dd1.rare <- dada(drp1.rare, err=err1, multithread=TRUE, BAND_SIZE=32)
+st1.rare <- makeSequenceTable(dd1.rare)
+```
+
+Replicate 2:
+```{r proc-rare2}
+drp2.rare <- derepFastq(rares2[keep])
+dd2.rare <- dada(drp2.rare, err=err2, multithread=TRUE, BAND_SIZE=32)
+st2.rare <- makeSequenceTable(dd2.rare)
+```
+
+We now merge the sequence tables into a data.frame with entries for each ASV found in each sample (in either replicate) along with the abundances detected in both replicates.k
+
+```{r rep-merge}
+sq1.rare <- colnames(st1.rare)
+rownames(st1.rare) <- sample.names[keep]
+df1 <- melt(st1.rare, varnames=c("Sample", "Sequence"), value.name="Abundance.1")
+sq2.rare <- colnames(st2.rare)
+rownames(st2.rare) <- sample.names[keep]
+df2 <- melt(st2.rare, varnames=c("Sample", "Sequence"), value.name="Abundance.2")
+df.rep <- merge(df1, df2, by=c("Sample", "Sequence"))
+# Remove the sequence/samples in which that sequence wasn't in that sample
+df.rep <- df.rep[df.rep$Abundance.1 > 0 | df.rep$Abundance.2 > 0,]
+df.rep$Presence <- "Both"
+df.rep$Presence[df.rep$Abundance.1>0 & df.rep$Abundance.2==0] <- "Replicate.1"
+df.rep$Presence[df.rep$Abundance.1==0 & df.rep$Abundance.2>0] <- "Replicate.2"
+```
+
+Let's visualize the agreement.
+
+```{r plot-rep}
+p.rep <- ggplot(data=df.rep, aes(x=Abundance.1, y=Abundance.2, color=Presence)) + 
+  geom_point() + theme(aspect.ratio=1) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", size=0.2) +
+  xlab("Abundance (Replicate 1)") + ylab("Abundance (Replicate 2)") +
+  scale_color_manual(values=c(Both="black", Replicate.1="red", Replicate.2="red"))
+p.rep
+p.rep + facet_wrap(~Sample)
+```
+
+That's pretty good! Let's take a closer look at the low abundance stuff.
+
+```{r plot-rep-200}
+p.rep + xlim(0,200) + ylim(0, 200) + aes(alpha=0.2)
+p.rep + xlim(0,200) + ylim(0, 200) + aes(alpha=0.2) + facet_wrap(~Sample)
+```
+
+Still good! Non-replicated ASVs don't start appearing until we hit ~40 reads and below, which is 0.4% frequency in these 10k read samples.
+
+```{r cor}
+cor(df.rep$Abundance.1, df.rep$Abundance.2)
+table(df.rep$Presence)
+tapply(df.rep$Abundance.1, df.rep$Presence, sum)/sum(df.rep$Abundance.1)
+tapply(df.rep$Abundance.2, df.rep$Presence, sum)/sum(df.rep$Abundance.2)
+```
+
+Now make a publication plot showing the full range and the low-frequency range:
+```{r plot-2B}
+df2B <- rbind(cbind(df.rep, Range="ALL"), 
+              cbind(df.rep[df.rep$Abundance.1 <= 200 & df.rep$Abundance.2 <= 200,], Range="LTE300"))
+p2B <- ggplot(data=df2B, aes(x=Abundance.1, y=Abundance.2, color=Presence)) +
+  geom_point() + theme(aspect.ratio=1) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", size=0.2) +
+  xlab("Abundance (Replicate 1)") + ylab("Abundance (Replicate 2)") +
+  scale_color_manual(values=c(Both="black", Replicate.1="red", Replicate.2="red")) +
+  facet_wrap(~Range, scales="free", ncol=1) + theme(strip.text=element_blank()) +
+  guides(color=FALSE)
+p2B
+ggsave(file.path(path.out, "Fecal_Replicate_Cor.pdf"), p2B, width=3, height=5,units="in", useDingbats=FALSE)
+```
+
+
+
+
+
+
