@@ -8,10 +8,10 @@ You can run these analyses on your own machine by (1) cloning the repository, (2
 
 These Rmarkdown documents have also been rendered into html format, and can be viewed in your web browser:
 
-* Classification of sequence variants by decontam [is consistent with expectations based on prior evidence in the human oral microbiome](https://benjjneb.github.io/DecontamManuscript/Analyses/oral_contamination.html).
-* Removal of contaminants identified by decontam [dramaticaly reduces kit and sequence-center effecst in a dilution series experiment](https://benjjneb.github.io/DecontamManuscript/Analyses/salter_metagenomics.html).
-* [decontam confirms the lack of evidence for a placenta microbiome in a 16S rRNA gene dataset](https://benjjneb.github.io/DecontamManuscript/Analyses/lauder_placenta.html), even amongst the rarest variants.
-* decontam corroborated suspicions that [run-specific contaminants contributed to false-positives in exploratory analysis of associations between low-frequency taxa and preterm birth](https://benjjneb.github.io/DecontamManuscript/Analyses/callahan_ptb.html).
+* [Analysis of the Zymo mock community](https://benjjneb.github.io/LRASManuscript/LRASms_Zymo.html).
+* [Analysis of the HMP mock community](https://benjjneb.github.io/LRASManuscript/LRASms_HMP.html).
+* [Analysis of the replicate fecal samples](https://benjjneb.github.io/LRASManuscript/LRASms_fecal.html).
+* [Re-analysis of the S. aureus data from Wagner 2016](https://benjjneb.github.io/LRASManuscript/LRASms_Saureus.html).
 
 ## DADA2 and PacBio
 
