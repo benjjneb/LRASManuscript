@@ -68,7 +68,7 @@ track2 <- filterAndTrim(nops2, filts2, minQ=3, minLen=1000, maxLen=1600, maxN=0,
 track2
 ```
 
-Losing <2% of reads per sample. Mean/Median reads per sample is 20K! No low depth outliers.
+Losing <2% of reads per sample. Mean/Median reads per sample is over 20K! No low depth outliers.
 
 ## Run DADA2
 
@@ -270,7 +270,6 @@ Check the total numbers for each replicate after primer removal and filtering.
 ```{r read-totals}
 colSums(track1); median(track1[,2])
 colSums(track2); median(track2[,2])
-
 ```
 
 ## Rarefy to consistent depth
@@ -297,12 +296,13 @@ rarefyFastq <- function(filt, fout, n) {
 
 Rarefy the first replicate to 10k reads per sample.
 ```{r rarefy-1}
+set.seed(100) # Seed RN generator for full replication
 rares1 <- file.path(path1.rare, basename(filts1))
 nrec1 <- mapply(rarefyFastq, filts1, rares1, n=10000)
 names(nrec1) <- sample.names1
 nrec1
 ```
-Three samples had less then 10k reads. While we could drop the rarefaction depth, I'm choosing to keep it at 10k and drop those samples for ease of interpretability (e.g. 1% frequency = 100 reads).
+Two samples had less then 10k reads. While we could drop the rarefaction depth, I'm choosing to keep it at 10k and drop those samples for ease of interpretability (e.g. 1% frequency = 100 reads).
 
 Rarefy the second replicate to 10k reads per sample.
 ```{r rarefy-2}
