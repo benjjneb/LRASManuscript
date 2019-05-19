@@ -37,9 +37,11 @@ The sequencing was performed on a Sequel, with the S/P1-C1.2 sequencing chemistr
 Load libraries, setup paths, prepare environment:
 ```{r init, warning=FALSE, message=FALSE}
 library(dada2);packageVersion("dada2")
-library(Biostrings); packageVersion("Biostrings")
-library(ggplot2); packageVersion("ggplot2")
-library(reshape2); packageVersion("reshape2")
+library(Biostrings);packageVersion("Biostrings")
+library(ShortRead);packageVersion("ShortRead")
+library(ggplot2);packageVersion("ggplot2")
+library(reshape2);packageVersion("reshape2")
+library(RColorBrewer);packageVersion("RColorBrewer")
 path <- "~/Desktop/LRAS/Data/Zymo/" # CHANGE ME to location of the fastq file
 path.out <- "Figures/" 
 path.rds <- "RDS/" 
@@ -57,7 +59,7 @@ genusPalette <- c(Bacillus="#e41a1c", Enterococcus="#377eb8", Escherichia="#4daf
 Remove primers and orient reads:
 ```{r primers}
 nop <- file.path(path, "noprimers", basename(fn))
-dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
+prim <- removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
 ```
 
 Very little loss there even though primer indels aren't allowed currently. 
@@ -87,7 +89,7 @@ drp <- derepFastq(filt, verbose=TRUE)
 Learn errors:
 
 ```{r learn-err}
-err <- learnErrors(drp, BAND_SIZE=32, multithread=TRUE, errorEstimationFunction=dada2:::PacBioErrfun) # seconds
+err <- learnErrors(drp, BAND_SIZE=32, multithread=TRUE, errorEstimationFunction=dada2:::PacBioErrfun) # 10s of seconds
 ```
 
 Inspect errors:
@@ -101,6 +103,11 @@ Denoise:
 ```{r dada}
 dd <- dada(drp, err=err, BAND_SIZE=32, multithread=TRUE) # seconds
 dd
+```
+
+Read tracking:
+```{r}
+cbind(ccs=prim[,1], primers=prim[,2], filtered=track[[2]], denoised=sum(dd$denoised))
 ```
 
 Inspect clustering data.frame
@@ -366,13 +373,176 @@ It is only with the true copy numbers that we get the integer ladder.
 
 ## PacBio Quality Diagnostics
 
-We now consider the distribution of PacBio CCS sequencing errors, assuming that our reconstruction of this community is perfect.
+We now consider the distribution of PacBio CCS sequencing errors, using the reconstructed ASVs as the ground truth as confirmed above.
 
-More diagnostics for the proposal:
+Rerun dada correcting all reads:
+```{r}
+dda <- dada(drp, err=err, BAND_SIZE=32, OMEGA_C=0, multi=TRUE)
+dda
+```
+
+Record all errors between the raw reads and the true ASVs by position (1-1500ish) and by type (D:Deletion, I:Insertion, S:Substitution).
+```{r}
+library(Biostrings)
+diffs <- function(query, ref, vec=TRUE, ...) { # Currently not capturing insertions
+  al <- nwalign(query, ref, vec=vec, ...)
+  cstr <- compareStrings(al[[1]], al[[2]])
+  cstr.ref <- gsub("[+]", "", cstr) # Ref coordinates, but lose insertion info
+  cstr.q <- gsub("[-]", "", cstr) # Query coordinates, but lose deletion info
+  cstr.ins <- gsub("[+]+", "+", cstr) # Reduce all multi-base inserts to a single insert
+  cstr.del <- gsub("[-]+", "-", cstr) # Reduce all multi-base deletions to a single deletion
+  refpos.sub <- unlist(gregexpr(pattern='[?]', cstr.ref))
+  refpos.del <- unlist(gregexpr(pattern='[-]+', cstr.ref)) # Just getting loc of first deleted base of multi-nt deletions
+  refpos.ins <- unlist(gregexpr(pattern='[+]', cstr.ins))
+  refpos.ins <- refpos.ins - seq_along(refpos.ins) + 1 # Correct back to ref coords
+  qpos.sub <- unlist(gregexpr(pattern='[?]', cstr.q))
+  qpos.ins <- unlist(gregexpr(pattern='[+]+', cstr.q)) # Just getting loc of first inserted base of multi-nt inserts
+  qpos.del <- unlist(gregexpr(pattern='[-]', cstr.del))
+  qpos.del <- qpos.del - seq_along(qpos.del) + 1 # Correct back to ref coords
+  rv <- rbind( data.frame(Type="S", RefPos=refpos.sub, QueryPos=qpos.sub),
+               data.frame(Type="D", RefPos=refpos.del, QueryPos=qpos.del),
+               data.frame(Type="I", RefPos=refpos.ins, QueryPos=qpos.ins))
+  rv[rv$RefPos > -1,]
+}
+
+df.diffs <- function(i) {
+  df <- diffs(getSequences(drp)[i], dd$sequence[dd$map[i]])
+  df <- cbind(df, Abund = rep(drp$uniques[i], nrow(df)), 
+              Derep=rep(i, nrow(df)), Denoised=rep(dd$map[i], nrow(df)))
+  df$Qual <- drp$quals[cbind(df$Derep, df$QueryPos)]
+  df
+}
+```
+
+Identify chimeras in the denoised reads:
+```{r}
+bim.drp <- isBimeraDenovo(drp, minFoldParentOverAbundance=3.5, multi=TRUE) # A couple minutes
+table(bim.drp)
+unname(drp$uniques[unname(head(which(bim.drp)))])
+```
+
+Identify which uniques were corrected/uncorrected:
+```{r}
+corrected.drp <- !is.na(dd$map)
+table(corrected.drp)
+```
+
+Identify contaminants as those reads that are not assigned to one of the genera in the mock community.
+```{r}
+tax.drp.uncorrected <- assignTaxonomy(getSequences(drp)[!corrected.drp], "~/tax/silva_nr_v128_train_set.fa.gz", multi=TRUE) # 
+table(tax.drp.uncorrected[,"Genus"], useNA="ifany")
+table(bim.drp[!corrected.drp][is.na(tax.drp.uncorrected[,"Genus"])], useNA="ifany")
+unname(tax.drp.uncorrected[!bim.drp[!corrected.drp] & is.na(tax.drp.uncorrected[,"Genus"]),])
+```
+
+Construct a data.frame of all errors between non-contaminant/non-chimeric reads and the true ASVs.
+
+```{r}
+gens <- unique(tax[,"Genus"])
+keep <- !is.na(dd$map) # Keep all corrected at default settings
+keep[!keep] <- tax.drp.uncorrected[,"Genus"] %in% gens # Also keep uncorrected if in the expected genera
+keep[bim.drp] <- FALSE # Don't keep chimeras
+ii <- which(keep) # Index version of keep
+diffs.keep <- lapply(ii, df.diffs) # ~2 mins
+bar <- do.call(rbind, diffs.keep)
+bar <- bar[order(bar$Qual, decreasing=TRUE),]
+```
+
+Count up the number of reads that were kept that extend to each nucleotide position.
+```{r}
+nnt.keep <- sapply(seq(max(nchar(getSequences(drp)[keep]))), function(pos) {
+  sum(drp$uniques[keep & nchar(getSequences(drp)) >= pos])
+})
+```
+
+Barplots with quality colored as a function of query sequence position:
+```{r}
+pbar <- bar
+pbar <- pbar[!is.na(pbar$Qual),]
+pbar$Quality <- cut(pbar$Qual, c(0, 50, 70, 90, 93))
+qual.map <- c("(0-50]"="0-50", "(51,70]"="51-70", "(70,90]"="71-90", "(70,90]"="91+")
+pbar$Quality <- qual.map[pbar$Quality]
+pbar$Quality[pbar$Type=="D"] <- "NA"
+pbar$Quality <- factor(pbar$Quality, levels=c(qual.map, "NA"))
+type.map <- c("S"="Substitution", "D"="Deletion", "I"="Insertion")
+pbar$Error <- factor(type.map[pbar$Type], levels=c("Substitution", "Insertion", "Deletion"))
+color.scale <- c("hotpink", colorRampPalette(c("deeppink2", "dodgerblue2"))(3))
+color.scale <- c(colorRampPalette(c("black", "cyan"))(4), "grey")
+# Convert counts to rates by using the total lengths of all reads
+pbar$Rate <- pbar$Abund/nnt.keep[pbar$QueryPos]
+p.err.pos <- ggplot(data=pbar, aes(x=QueryPos,y=Rate,color=NULL, fill=Quality)) + geom_col() +
+  facet_grid(Error~., scales="free_y") + guides(color=FALSE) + xlab("Nucleotide Position") + ylab("Error Rate") +
+  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale)
+#  scale_y_continuous(breaks=c(0, 0.005))
+p.err.pos
+ggsave(file.path(path.out, "Zymo_errpos.pdf"), p.err.pos, width=178, height=100, units="mm", useDingbats=FALSE)
+p.err.pos.200 <- ggplot(data=pbar[pbar$QueryPos %in% seq(151,350),], aes(x=QueryPos,y=Rate, color=NULL, fill=Quality)) + geom_col() +
+  facet_grid(Error~., scales="free_y") + guides(color=FALSE) + xlab("Nucleotide Position") + ylab("Error Rate") +
+  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale)
+#  scale_y_continuous(breaks=c(0, 0.005))
+p.err.pos.200
+ggsave(file.path(path.out, "errpos_200.pdf"), p.err.pos.200, width=178, height=78, units="mm", useDingbats=FALSE)
+ggsave(file.path(path.out, "Zymo_errpos_200.png"), p.err.pos.200, dpi=300)
+#  scale_color_gradientn(colors=rainbow(5)) + facet_wrap(~Type)
+```
+
+That is pretty cool. The two big peaks in substitutionss are strongly associated with lower quality scores, and quality is very informative about insertions! Quality doesn't work for deletions of course because deletions as they aren't in the query sequence, and hence don't really have an associated quality score.
+
+Calculate aggregate error probabilities for total errors and each type individually:
+```{r}
+sq.drp <- getSequences(drp)
+totbases.keep <- sum( (nchar(sq.drp)*drp$uniques)[keep] )
+tapply(bar$Abund, bar$Type, sum); sum(bar$Abund)
+tapply(bar$Abund, bar$Type, sum)/totbases.keep; sum(bar$Abund)/totbases.keep
+```
+
+Plot error rates versus quality scores for subsitutions and insertions.
+```{r}
+srq <- readFastq(filt)
+qmat <- as(quality(srq), "matrix") # Raw quality scores
+totqs.keep <- tabulate(as.vector(qmat[keep,])) # entries 1-93 for the Q scores
+imat.subs <- cbind(drpi = unlist(sapply(bar$Derep[bar$Type=="S"], function(i) which(drp$map==i))),
+                   pos = rep(bar$QueryPos[bar$Type=="S"], times=bar$Abund[bar$Type=="S"]))
+subqs.keep <- tabulate(as.vector(qmat[imat.subs]))
+imat.ins <- cbind(drpi = unlist(sapply(bar$Derep[bar$Type=="I"], function(i) which(drp$map==i))),
+                  pos = rep(bar$QueryPos[bar$Type=="I"], times=bar$Abund[bar$Type=="I"]))
+insqs.keep <- tabulate(as.vector(qmat[imat.ins]))
+```
+
+```{r}
+df.qplot <- data.frame(Quality=rep(seq(93),2), 
+                       Count=c(subqs.keep, insqs.keep), 
+                       Rate=c(subqs.keep/totqs.keep, insqs.keep/totqs.keep),
+                       Type=rep(c("Substitution", "Insertion"), each=93))
+ggplot(data=df.qplot, aes(x=Quality, y=Rate, color=Type)) + 
+  geom_hline(aes(yintercept=sum(bar$Abund[bar$Type=="D"])/totbases.keep), color="grey", linetype="dashed") +
+  geom_point() + 
+  scale_y_log10(breaks=c("0.0001"=0.0001, "0.001"=0.001, "0.01"=0.01, "0.1"=0.1), name="Error Rate") + 
+  scale_color_manual(values=c(Insertion="maroon", Substitution="orange"), name="Error Type") +
+  scale_x_continuous(breaks=c(0, 20, 40, 60, 80, 93), limits=c(0, 93), name="Quality Score") +
+  theme_bw()
+```
+
+The saturation of substitution errors at high Q are probably explained by PCR. The complementation symmetry especially at high Q values in the `plotErrors` further suggests PCR origin for most of these errors.
+
+```{r}
+plotErrors(err)
+```
+
+Some summary statistics and plots on the distribution of quality scores:
+```{r}
+totqs.keep[[93]]/sum(totqs.keep) # Fraction with max q=93 quality score
+ggplot(data=data.frame(Quality=seq(93), Count=totqs.keep), aes(x=Quality, y=Count)) +
+  geom_step() + theme_bw() + scale_y_log10()
+ggplot(data=data.frame(Quality=seq(93), Cumulative=cumsum(totqs.keep)/sum(totqs.keep)), aes(x=Quality, y=Cumulative)) +
+  geom_step() + theme_bw()
+```
+
+Also calculate the number of CCS reads that were error-free at various stages.
 ```{r}
 n.error.free <- sum(drp$uniques[dd$sequence])
-n.error.free
-track
-n.error.free/track[[1]] # Fraction error-free out of pre-filtered reads
+cbind(ccs=prim[,1], primers=prim[,2], filtered=track[[2]], denoised=sum(dd$denoised), error.free=n.error.free)
+n.error.free/prim[[1]] # Fraction error-free out of all CCS reads
+n.error.free/track[[1]] # Fraction error-free out of CCS reads with detected primers, but before filtering
 ```
 

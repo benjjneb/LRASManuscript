@@ -44,10 +44,7 @@ We will start by processing replicate 2, the high depth replicate, which we will
 Remove primers and orient reads:
 ```{r primers2, message=FALSE, warning=FALSE}
 nops2 <- file.path(path2, "noprimers", basename(fns2))
-for(i in seq_along(fns2)) {
-  fn <- fns2[[i]]; nop <- nops2[[i]]
-  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
-}
+prim2 <- removePrimers(fns2, nops2, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
 ```
 
 Higher loss here than in the mock communities, but still very reasonable. Probably not surprising its a bit higher given this is a real sample rather than mock DNA, and the DNA extraction step was done by CoreBiome without special care to ensuring higher molecular weight DNA.
@@ -94,8 +91,13 @@ Looks good.
 
 Denoise:
 ```{r dada2}
-dd2 <- dada(drp2, err=err2, multithread=TRUE)
+dd2 <- dada(drp2, err=err2, BAND_SIZE=32, multithread=TRUE)
 saveRDS(dd2, file.path(path.rds, "Fecal_dd2.rds"))
+```
+
+Read tracking for replicate 2:
+```{r}
+cbind(ccs=prim2[,1], primers=prim2[,2], filtered=track2[,2], denoised=sapply(dd2, function(x) sum(x$denoised)))
 ```
 
 Sequence table:
@@ -248,10 +250,7 @@ sample.names1 <- sapply(strsplit(fns1, "_"), function(x) paste(x[4], x[5], sep="
 sample.names1 <- gsub(".fastq.gz", "", sample.names1)
 # Remove primers
 nops1 <- file.path(path1, "noprimers", basename(fns1))
-for(i in seq_along(fns1)) {
-  fn <- fns1[[i]]; nop <- nops1[[i]]
-  dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
-}
+prim1 <- removePrimers(fns1, nops1, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE)
 # Filter
 filts1 <- file.path(path1, "noprimers", "filtered", basename(fns1))
 track1 <- filterAndTrim(nops1, filts1, minQ=3, minLen=1000, maxLen=1600, maxN=0, rm.phix=FALSE, maxEE=2)
@@ -264,6 +263,16 @@ Continue through learning the error rates.
 ```{r learn-err1}
 err1 <- learnErrors(filts1, errorEstimationFunction=PacBioErrfun, BAND_SIZE=32, multithread=TRUE)
 saveRDS(err1, file.path(path.rds, "Fecal_err1.rds"))
+```
+
+And denoise for the read tracking counts.
+```{r dada1}
+dd1 <- dada(filts1, err=err1, BAND_SIZE=32, multithread=TRUE)
+```
+
+Read tracking for Replicate 1:
+```{r track1}
+cbind(ccs=prim1[,1], primers=prim1[,2], filtered=track1[,2], denoised=sapply(dd1, function(x) sum(x$denoised)))
 ```
 
 Check the total numbers for each replicate after primer removal and filtering.

@@ -65,7 +65,7 @@ theme_set(theme_bw())
 Remove primers and orient reads:
 ```{r primers}
 nop <- file.path(path, "noprimers", basename(fn))
-dada2:::removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
+prim <- removePrimers(fn, nop, primer.fwd=F27, primer.rev=dada2:::rc(R1492), orient=TRUE, verbose=TRUE)
 ```
 Very little loss there even though primer indels aren't allowed currently. 
 
@@ -105,6 +105,11 @@ Denoise:
 ```{r}
 dd <- dada(drp, err=err, BAND_SIZE=32, multithread=TRUE)
 dd
+```
+
+Read tracking:
+```{r}
+cbind(ccs=prim[,1], primers=prim[,2], filtered=track[,2], denoised=sum(dd$denoised))
 ```
 
 Inspect clustering data.frame
