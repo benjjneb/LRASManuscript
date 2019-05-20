@@ -1,7 +1,6 @@
 ---
 title: "DADA2 + PacBio: Fecal Samples"
 author: "Benjamin J Callahan"
-date: "7/19/2018"
 output: html_document
 ---
 
@@ -22,6 +21,7 @@ library(Biostrings); packageVersion("Biostrings")
 library(ShortRead); packageVersion("ShortRead")
 library(ggplot2); packageVersion("ggplot2")
 library(reshape2); packageVersion("reshape2")
+library(gridExtra); packageVersion("gridExtra")
 library(phyloseq); packageVersion("phyloseq")
 path1 <- "~/Desktop/LRAS/Data/Fecal1" # CHANGE ME to location of the First Replicate fastq files
 path2 <- "~/Desktop/LRAS/Data/Fecal2" # CHANGE ME to location of the Second Replicate fastq files
@@ -217,10 +217,15 @@ xx.R9 <- c(Ec2=1+PAD, Ec12=2+PAD, Ec13=3+PAD, Ec14=4+PAD, # Strain 2
 ecmp$X <- 0
 is.R3 <- ecmp$Subject == "R3"; ecmp$X[is.R3] <- xx.R3[ecmp$SequenceVariant[is.R3]]
 is.R9 <- ecmp$Subject == "R9"; ecmp$X[is.R9] <- xx.R9[ecmp$SequenceVariant[is.R9]]
+# Force desired facet ymax limits with a custom data.frame
+dflim <- data.frame(X=c(1, 1), Abundance=c(3000, 1500), 
+                    SequenceVariant=c("Ec1", "Ec1"),
+                    SubjectLabel=c("Subject R3", "Subject R9"), Timepoint=c("Timepoint 1", "Timepoint 1"))
 p.ecoli <- ggplot(data=ecmp, aes(x=X, y=Abundance, color=SequenceVariant)) + geom_point() + 
   facet_grid(SubjectLabel~Timepoint, scales="free_y") +
   xlab("E. coli ASVs") + theme(axis.ticks.x=element_blank(), axis.text.x = element_blank()) +
   theme(panel.grid.major.x=element_blank(), panel.grid.minor.x=element_blank()) + 
+  geom_blank(data=dflim) +
   guides(color=FALSE)
 p.ecoli
 ggsave(file.path(path.out, "Fecal_Ecoli_ASVs.pdf"), width=5, height=3, useDingbats=FALSE)
@@ -404,7 +409,14 @@ p2B
 ggsave(file.path(path.out, "Fecal_Replicate_Cor.pdf"), p2B, width=3, height=5,units="in", useDingbats=FALSE)
 ```
 
-
+And a publication plot with both panels:
+```{r plot-2panel}
+p.2pan <- arrangeGrob(p2B, p.ecoli + theme(aspect.ratio=1), nrow=1, widths=c(0.3, 0.7))
+plot(p.2pan)
+ggsave(file.path(path.out, "Fecal_2Panel.pdf"), p.2pan,
+                 width=178, height=88, units="mm", useDingbats=FALSE)
+# Finish up the strain labeling and panel labels in Illustrator
+```
 
 
 

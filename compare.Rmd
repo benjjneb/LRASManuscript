@@ -1,0 +1,150 @@
+---
+title: "Compare DADA2, mothur and usearch on Full-length 16S data from the Zymo and HMP mocks"
+author: "Benjamin J Callahan"
+output: html_document
+---
+
+## Setup
+
+Load libraries, setup paths, prepare environment:
+```{r}
+library(dada2); packageVersion("dada2")
+fn.silva <- "~/tax/silva_nr_v128_train_set.fa.gz" # CHANGE ME...
+```
+
+## Input Results
+The DADA2, mothur and usearch pipelines were all run, starting with the fastq files after pre-processing by the DADA2 software package as described in the manuscript (i.e. after primer removal, orientation and filtering). The exact workflows for the mothur and usearch pipelines are included as batch and shell files, respectively, within the associated directories in this repository.
+
+We'll parse the results from each pipeline into a common format, a `data.frame` with a `$sequence` columns of the ASV or representative OTU sequence, and a `$abundance` column with the abundance of that ASV or OTU.
+
+Read in DADA2:
+```{r}
+# Zymo
+fdZ <- "RDS/Zymo_dd.rds"
+unq <- getUniques(readRDS(fdZ))
+dfdZ <- data.frame(sequence=names(unq), abundance=unq, stringsAsFactors=FALSE)
+# BEI/HMP
+fdB <- "RDS/HMP_dd.rds"
+unq <- getUniques(readRDS(fdB))
+dfdB <- data.frame(sequence=names(unq), abundance=unq, stringsAsFactors=FALSE)
+# Assign taxonomy
+taxdZ <- assignTaxonomy(dfdZ, fn.silva, multi=TRUE)
+taxdB <- assignTaxonomy(dfdB, fn.silva, multi=TRUE)
+```
+
+Read in mothur:
+```{r}
+# Zymo
+fmZ <- "mothur_1.41.3/zymo_CCS_99_9.unique.good.filter.unique.precluster.pick.opti_mcc.0.03.rep.fasta"
+sqmZ <- gsub("-", "", getSequences(fmZ)) # Remove gap characters
+# Extract abundance information from the id lines
+extract_abund <- function(id) {
+  ab <- sapply(strsplit(id,"\\t"), `[`, 2)
+  ab <- sapply(strsplit(ab,"\\|"), `[`, 2)
+  as.integer(ab)
+}
+dfmZ <- data.frame(sequence=sqmZ, abundance = extract_abund(names(sqmZ)), stringsAsFactors=FALSE)
+rownames(dfmZ) <- NULL
+# BEI/HMP
+fmB <- "mothur_1.41.3/SO_BEI_stagLo_16S_CCS_99.9.unique.good.filter.unique.precluster.pick.opti_mcc.0.03.rep.fasta"
+sqmB <- gsub("-", "", getSequences(fmB)) # Remove gap characters
+dfmB <- data.frame(sequence=sqmB, abundance = extract_abund(names(sqmB)), stringsAsFactors=FALSE)
+rownames(dfmB) <- NULL
+# Assign taxonomy
+taxmZ <- assignTaxonomy(dfmZ, fn.silva, multi=TRUE)
+taxmB <- assignTaxonomy(dfmB, fn.silva, multi=TRUE)
+```
+
+Read in usearch:
+```{r}
+# Zymo
+fuZtab <- "usearch/Zymo_OTU_table.tsv"
+fuZsq <- "usearch/Zymo_OTU.fa"
+dfuZ <- read.table(fuZtab, row.names=1, col.names=c("row.names", "abundance"), stringsAsFactors=FALSE)
+dfuZ$sequence <- getSequences(fuZsq)[rownames(dfuZ)]
+# BEI/HMP
+fuBtab <- "usearch/BEI_OTU_table.tsv"
+fuBsq <- "usearch/BEI_OTU.fa"
+dfuB <- read.table(fuBtab, row.names=1, col.names=c("row.names", "abundance"), stringsAsFactors=FALSE)
+dfuB$sequence <- getSequences(fuBsq)[rownames(dfuB)]
+# Assign taxonomy
+taxuZ <- assignTaxonomy(dfuZ, fn.silva, multi=TRUE)
+taxuB <- assignTaxonomy(dfuB, fn.silva, multi=TRUE)
+```
+
+## Evaluate Accuracy
+We already have established the accuracy of the DADA2 ASVs in the Rmarkdowns dedicated to analyzing those results (100% TPs to as best as we can tell). The established ground truth of those ASVs will be our first basis of comparison for the other methods, and then any OTUs from those methods that don't match these ground-truth ASVs will be evaluated more carefully using a similar approach as before, in particular comparison to reference databases such as nt, and whether they represent expected genera in these mock communities.
+
+## Zymo mock
+
+**mothur/Zymo:**
+```{r}
+match.asv <- dfmZ$sequence %in% dfdZ$sequence
+table(match.asv, singleton=dfmZ$abundance==1)
+table(taxmZ[match.asv,"Genus"])
+```
+
+All 8 of the mock community genera are detected. The OTUs that don't match ground-truth ASVs are 11/15 singletons.
+
+```{r eval=FALSE}
+dada2:::pfasta(dfmZ$sequence[!match.asv])
+# BLAST againt nt
+```
+
+Inspection of the BLAST results from the non-matching OTUs suggests that they are essentialy all consistent with being errors. Mostly undetected chimeras, but some seemingly multi-substitution errors, and one possible contaminant.
+
+**usearch/Zymo:**
+```{r}
+match.asv <- dfuZ$sequence %in% dfdZ$sequence
+table(match.asv, singleton=dfuZ$abundance==1)
+table(taxuZ[match.asv,"Genus"])
+```
+
+All 8 OTUs match ground-truth ASVs, and they represent all 8 expected genera in the mock community.
+
+**Zymo results**
+
+* DADA2: 29 ASVs, all TPs, all 8 strains detected.
+* mothur: 24 OTUs, 8 TPs, 5 non-singleton FPs, 11 singleton FPs, all 8 strains detected
+* usearch: 8 OTUs, all TPs, all 8 strains detected
+
+## BEI mock
+
+**mothur/BEI:**
+```{r}
+match.asv <- dfmB$sequence %in% dfdB$sequence
+table(match.asv, singleton=dfmB$abundance==1)
+table(taxmB[match.asv,"Genus"])
+```
+
+15 OTUs match ground-truth ASVs, and they represent 15 of the mock community taxa: 14 unique genera and both *Streptococcus* species are distinguished. The *Staphylococcus* species were not distinuished from one another though. The OTUs that don't match ground-truth ASVs are 9/14 singletons. The *Neisseria gonorrhoeae* strain in the mock community was not detected.
+
+```{r eval=FALSE}
+dada2:::pfasta(dfmB$sequence[!match.asv])
+# BLAST againt nt
+```
+
+All but one of these look to be chimeras, sequencing errors or contaminants. But that other one is a true positive from the *Deinococcus radiodurans* strain in the mock community that was not detected by DADA2!
+
+```{r}
+dfmB[taxmB[,"Genus"] %in% "Deinococcus","abundance"]
+```
+
+*Deinococcus radiodurans* was present in just 3 reads.
+
+**usearch/BEI:**
+```{r}
+match.asv <- dfuB$sequence %in% dfdB$sequence
+table(match.asv, singleton=dfuB$abundance==1)
+table(taxuB[match.asv,"Genus"])
+```
+
+16 OTUs match ground-truth ASVs, and they represent 16 of the mock community taxa: 15 unique genera and both *Streptococcus* species are distinguished. The *Staphylococcus* species were not distinuished from one another.
+
+**BEI/HMP results**
+
+* DADA2: 51 ASVs, all TPs, 17 strains detected
+* mothur: 29 OTUs, 16 TPs, 4 non-singleon FPs, 9 singleton FPs, 16 strains detected
+    + mothur did not detect *Neisseria* or distinguish the *Staphyloccocus* spcecies, but did detect *Deinococcus* at 3 reads
+* usearch: 16 OTUs, all TPs, 16 strains detected
+    + usearch did not distinguish the *Staphyloccocus* spcecies

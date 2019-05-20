@@ -1,7 +1,6 @@
 ---
 title: "DADA2 + PacBio: S. aureus from Wagner et al. 2016"
 author: "Benjamin J Callahan"
-date: "7/17/2018"
 output: html_document
 ---
 

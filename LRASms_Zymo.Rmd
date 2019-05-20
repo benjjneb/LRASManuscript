@@ -1,7 +1,6 @@
 ---
 title: "DADA2 + PacBio: ZymoBIOMICS Microbial Community Standard"
 author: "Benjamin J Callahan"
-date: "7/19/2018"
 output: html_document
 ---
 
@@ -312,14 +311,14 @@ p.stoich <- ggplot(data=dfasv, aes(x=Variant, y=ScaledAbundance, fill=Genus, wid
   scale_fill_manual(values=genusPalette) +
   facet_wrap(~Genus, nrow=2) +
   scale_y_continuous(breaks=seq(0,round(max(dfasv$ScaledAbundance))), minor_breaks=NULL) +
-  theme(panel.grid.major.y=element_line(color="black", size=0.25)) +
+  theme(panel.grid.major.y=element_line(color="grey60", size=0.2)) +
   theme(panel.grid.major.x=element_blank(), panel.grid.minor.x=element_blank()) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   xlab("Full-length 16S Sequence Variants") + 
   ylab("Abundance (per-genome)") + 
   guides(fill=FALSE)
 p.stoich
-ggsave(file.path(path.out, "Zymo_Stoich.pdf"), p.stoich, width=6, height=4, units="in")
+ggsave(file.path(path.out, "Zymo_Stoich.pdf"), p.stoich, width=178, height=100, units="mm", useDingbats=FALSE)
 ```
 
 That is beautiful. There is an integer number of each sequence variant in each genome, just as there must be. That is, these aren't sequencing errors, these are real sequence variants. All of them.
@@ -470,20 +469,33 @@ color.scale <- c("hotpink", colorRampPalette(c("deeppink2", "dodgerblue2"))(3))
 color.scale <- c(colorRampPalette(c("black", "cyan"))(4), "grey")
 # Convert counts to rates by using the total lengths of all reads
 pbar$Rate <- pbar$Abund/nnt.keep[pbar$QueryPos]
+# Force desired facet ymax limits with a custom data.frame, and set desired breaks
+dflim <- data.frame(Rate=c(0.001, 0.01, 0.003), 
+                    QueryPos=c(200, 200, 200), 
+                    Quality=c("NA", "NA", "NA"),
+                    Error=c("Substitution", "Insertion", "Deletion"))
+my_breaks <- function(x) { 
+  if (max(x) < 0.0015) { c("0.0000"=0, "0.0010"=0.001) }  # "0.0005"=0.0005, 
+  else if(max(x) < 0.005) { c("0.0000"=0, "0.0010"=0.001, "0.0020"=0.002, "0.0030"=0.003) }
+#  else { c("0.0000"=0, "0.0050"=0.005, "0.0100"=0.01) }
+  else { c("0.0000"=0, "0.0020"=0.002, "0.0040"=0.004, "0.0060"=0.006, "0.0080"=0.008, "0.0100"=0.01) }
+}
 p.err.pos <- ggplot(data=pbar, aes(x=QueryPos,y=Rate,color=NULL, fill=Quality)) + geom_col() +
   facet_grid(Error~., scales="free_y") + guides(color=FALSE) + xlab("Nucleotide Position") + ylab("Error Rate") +
-  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale)
-#  scale_y_continuous(breaks=c(0, 0.005))
+  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale) +
+  geom_blank(data=dflim) + scale_y_continuous(breaks=my_breaks) + theme(axis.text.y=element_text(size=7))
 p.err.pos
 ggsave(file.path(path.out, "Zymo_errpos.pdf"), p.err.pos, width=178, height=100, units="mm", useDingbats=FALSE)
 p.err.pos.200 <- ggplot(data=pbar[pbar$QueryPos %in% seq(151,350),], aes(x=QueryPos,y=Rate, color=NULL, fill=Quality)) + geom_col() +
   facet_grid(Error~., scales="free_y") + guides(color=FALSE) + xlab("Nucleotide Position") + ylab("Error Rate") +
-  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale)
-#  scale_y_continuous(breaks=c(0, 0.005))
+  scale_color_manual(values=color.scale) + scale_fill_manual(values=color.scale) +
+  geom_blank(data=dflim) + scale_y_continuous(breaks=my_breaks) + theme(axis.text.y=element_text(size=7))
 p.err.pos.200
-ggsave(file.path(path.out, "errpos_200.pdf"), p.err.pos.200, width=178, height=78, units="mm", useDingbats=FALSE)
+ggsave(file.path(path.out, "Zymo_errpos_200.pdf"), p.err.pos.200, width=178, height=78, units="mm", useDingbats=FALSE)
 ggsave(file.path(path.out, "Zymo_errpos_200.png"), p.err.pos.200, dpi=300)
 #  scale_color_gradientn(colors=rainbow(5)) + facet_wrap(~Type)
+# In final polishing, used Illustrator toadd the intermediate ticks to the Insertion facet as well
+# so the ticks are the same scale (0.001) in each plot
 ```
 
 That is pretty cool. The two big peaks in substitutionss are strongly associated with lower quality scores, and quality is very informative about insertions! Quality doesn't work for deletions of course because deletions as they aren't in the query sequence, and hence don't really have an associated quality score.

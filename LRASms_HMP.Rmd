@@ -1,7 +1,6 @@
 ---
 title: "DADA2 + PacBio: HMP Mock Community"
 author: "Benjamin J Callahan"
-date: "7/19/2018"
 output: html_document
 ---
 
@@ -50,6 +49,7 @@ library(dada2);packageVersion("dada2")
 library(Biostrings); packageVersion("Biostrings")
 library(ggplot2); packageVersion("ggplot2")
 library(reshape2); packageVersion("reshape2")
+library(gridExtra); packageVersion("gridExtra")
 path <- "~/Desktop/LRAS/Data/BEI" # CHANGE ME to location of the fastq file
 path.out <- "Figures/"
 path.rds <- "RDS/"
@@ -324,12 +324,11 @@ dfgen <- data.frame(Genus=gens, Abundance=abund.ome, stringsAsFactors = FALSE)
 p.abundome <- ggplot(data=dfgen, aes(x=Genus, y=Abundance)) + 
   theme(axis.text.x=element_blank(), axis.ticks.x = element_blank()) +
   ylab("Genome Abundance") + xlab("Strains")
-p.abundome + geom_col(width=0.4, aes(fill=Genus)) # scale_fill_manual(values=genusPalette) +
-p.abundome.nice <- p.abundome+ geom_point(aes(color=Genus), shape="diamond", size=4) +
+#p.abundome + geom_col(width=0.4, aes(fill=Genus)) # scale_fill_manual(values=genusPalette) +
+p.abundome+ geom_point(aes(color=Genus), shape="diamond", size=3) +
   scale_y_log10(limits=c(0.3, NA), breaks=c(1,10,100,1000)) 
-p.abundome.nice
-ggsave(file.path(path.out, "HMP_GenomeAbundances.pdf"), p.abundome.nice,
-       width=6, height=4, units="in", useDingbats=FALSE)
+#ggsave(file.path(path.out, "HMP_GenomeAbundances.pdf"), p.abundome.nice,
+#       width=6, height=4, units="in", useDingbats=FALSE)
 ```
 
 Now we make a similar plot for the abundance of each sequence variant:
@@ -402,20 +401,24 @@ ggsave(file.path(path.out, "HMP_Stoich.pdf"), width=12, height=7, units="in")
 
 Now let's put the genome abundances together with the integers in a simpler plot:
 ```{r}
+p.abundome.nice <- p.abundome + geom_point(aes(color=Genus), shape="diamond", size=2.8) +
+  scale_y_log10(limits=c(0.3, NA), breaks=c(1,10,100,1000)) +
+  theme(text = element_text(size=9)) +
+  theme(legend.text=element_text(size=7.5), legend.key.height = unit(3.8, "mm"), legend.title=element_blank())
 p.stoich.nice <- ggplot(data=dfasv, aes(x=Genus, y=ScaledAbundance, color=Genus, width=0.5)) + 
-  geom_point(shape="x", size=4) + 
+  geom_point(shape="x", size=3.5) + 
   scale_y_continuous(breaks=seq(0, round(max(dfasv$ScaledAbundance))), minor_breaks=NULL) +
-  theme(panel.grid.major.y=element_line(color="black", size=0.25)) +
+  theme(text = element_text(size=9)) +
+  theme(panel.grid.major.y=element_line(color="grey60", size=0.2)) +
   theme(panel.grid.major.x=element_blank(), panel.grid.minor.x=element_blank()) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   xlab("Full-length 16S Sequence Variants") + 
   ylab("ASV Abundance (per-genome)")
 p.stoich.nice
-library(gridExtra)
 p.nice <- arrangeGrob(p.abundome.nice, p.stoich.nice + guides(color=FALSE), nrow=1, widths=c(0.6, 0.4))
 plot(p.nice)
 ggsave(file.path(path.out, "HMP_AbundanceAndStoich.pdf"), p.nice,
-                 width=10, height=4, units="in", useDingbats=FALSE)
+                 width=178, height=69, units="mm", useDingbats=FALSE)
 ```
 
 *B. cereus* a little off, and *Listeria* a little off. Others all look very good (although many are just one variant, so trivial integral-ness).

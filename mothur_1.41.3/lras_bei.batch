@@ -1,0 +1,23 @@
+set.dir(output=.)
+# Change the path below to point to the primer-free and filtered fastq file
+# Also need to convert the - to _ in the original filename or mothur breaks
+fastq.info(fastq=/Users/bcallah/Desktop/LRAS/Data/BEI/noprimers/filtered/SO_BEI_stagLo_16S_CCS_99.9.fastq)
+unique.seqs()
+count.seqs(name=current, group=current)
+# Downloaded silva.bacteria.fasta from Miseq SOP
+align.seqs(fasta=current, reference=../silva.bacteria.fasta)
+summary.seqs(fasta=current)
+screen.seqs(fasta=current, count=current, start=1044, end=43116)
+# Screening start/end chosen from summary.seqs info, and strongly supported
+filter.seqs(fasta=current, vertical=T, trump=.)
+count.seqs(name=current, group=current)
+unique.seqs(fasta=current, count=current)
+pre.cluster(fasta=current, count=current, diffs=14)
+# 14 diffs recommended in the Schloss 2016 PacBio paper
+chimera.uchime(fasta=current, count=current, dereplicate=T)
+remove.seqs(fasta=current, count=current, accnos=current)
+summary.seqs(fasta=current, count=current)
+dist.seqs(fasta=current, cutoff=0.03)
+cluster(column=current, count=current)
+make.shared(list=current, count=current, label=0.03)
+get.oturep(column=current, count=current, list=current, fasta=current, label=0.03, method=abundance)
